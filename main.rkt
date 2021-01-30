@@ -111,7 +111,13 @@
           (+ temp-int  (/ temp-frac  256))))
 
 (module* main #f
-  (require racket/format)
+  (require racket/format
+           racket/match)
+
+  (define gpio-pin
+    (match (current-command-line-arguments)
+      [(vector (app string->number (? number? gpio-pin))) gpio-pin]
+      [x (error 'main "expected gpio pin number got: ~a" x)]))
 
   (dht11_gpio_init)
 
@@ -127,7 +133,7 @@
 
   (define (run)
     (with-handlers ([exn:dht11? error-handler])
-      (define-values (h t) (dht11-current-humidity/temperature 24))
+      (define-values (h t) (dht11-current-humidity/temperature gpio-pin))
       (set! success (add1 success))
       (displayln (~a "[" (current-seconds) "] "
                      "[" (- (current-seconds) start) "/" success "/" fail "] "
