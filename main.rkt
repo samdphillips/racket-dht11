@@ -1,6 +1,7 @@
 #lang racket/base
 
-(require ffi/unsafe
+(require racket/runtime-path
+         ffi/unsafe
          syntax/parse/define)
 
 (provide (rename-out
@@ -8,25 +9,27 @@
 
          exn:dht11?
 
-         exn:dht11-init-error?
-         exn:dht11-init-error-errno
+         exn:dht11:init-error?
+         exn:dht11:init-error-errno
 
-         exn:dht11-sense-timeout?
-         exn:dht11-sense-timeout-counts
+         exn:dht11:sense-timeout?
+         exn:dht11:sense-timeout-counts
 
-         exn:dht11-checksum-fail?
-         exn:dht11-checksum-fail-bytes
-         exn:dht11-checksum-fail-checksum
+         exn:dht11:checksum-fail?
+         exn:dht11:checksum-fail-bytes
+         exn:dht11:checksum-fail-checksum
 
-         current-humidity/temperature)
+         dht11-current-humidity/temperature)
+
+(define-runtime-path libdht11-path "libdht11")
 
 (define dht11-lib
-  (ffi-lib "libdht11"))
+  (ffi-lib libdht11-path))
 
 (struct exn:dht11 exn:fail () #:transparent)
-(struct exn:dht11-init-error    exn:dht11 (errno)  #:transparent)
-(struct exn:dht11-sense-timeout exn:dht11 (counts) #:transparent)
-(struct exn:dht11-checksum-fail exn:dht11 (bytes checksum) #:transparent)
+(struct exn:dht11:init-error    exn:dht11 (errno)  #:transparent)
+(struct exn:dht11:sense-timeout exn:dht11 (counts) #:transparent)
+(struct exn:dht11:checksum-fail exn:dht11 (bytes checksum) #:transparent)
 
 (define dht11_gpio_init
   (get-ffi-obj
@@ -36,7 +39,7 @@
           -> [rc : _int]
           -> (unless (zero? rc)
                (raise 
-                 (exn:dht11-init-error
+                 (exn:dht11:init-error
                    "error initializing dht11 foreign library"
                    (current-continuation-marks)
                    (saved-errno)))))))
@@ -45,14 +48,17 @@
   (get-ffi-obj
     "dht11_sense"
     dht11-lib
-    (_fun _uint8
+    ;; XXX: lock-name should include the pin number
+    (_fun #:lock-name "dht11"
+          #:blocking? #t
+          _uint8
           [counts : (_ptr o (_array _uint32 82))]
           -> [rc : _int]
           -> (cond
                [(zero? rc) counts]
                [else
                  (raise
-                   (exn:dht11-sense-timeout
+                   (exn:dht11:sense-timeout
                      "timeout reading from dht11 sensor"
                      (current-continuation-marks)
                      counts))]))))
@@ -83,8 +89,8 @@
           temperature-frac
           checksum))
 
-(define (current-humidity/temperature pin)
-  (define counts (dht11_sense pin))
+(define (dht11-current-humidity/temperature gpio-pin)
+  (define counts (dht11_sense gpio-pin))
   (define-values (humid-int humid-frac
                   temp-int  temp-frac
                   checksum)
@@ -93,7 +99,7 @@
   (let ([sum (bitwise-and #xff (+ humid-int humid-frac temp-int temp-frac))])
     (unless (= sum checksum)
       (raise
-        (exn:dht11-checksum-fail
+        (exn:dht11:checksum-fail
           (format "current-humidity/temperature: checksum failed\n values: ~a\n checksum: ~a\n expected: ~a\n"
                   (list humid-int humid-frac temp-int temp-frac)
                   sum checksum)
@@ -121,7 +127,7 @@
 
   (define (run)
     (with-handlers ([exn:dht11? error-handler])
-      (define-values (h t) (current-humidity/temperature 24))
+      (define-values (h t) (dht11-current-humidity/temperature 24))
       (set! success (add1 success))
       (displayln (~a "[" (current-seconds) "] "
                      "[" (- (current-seconds) start) "/" success "/" fail "] "
